@@ -12,7 +12,7 @@ This crate provides a Rust API that uses AES-256-GCM to encrypt/decrypt files/di
 1. Clone the repository:
 
     ```shell
-    git clone https://github.com/your-username/filecipher.git
+    git clone https://github.com/mathisbot/filecipher.git
     ```
 
 2. Navigate to the project directory:
@@ -39,6 +39,7 @@ cargo doc --open
 
 ```rust
 use filecipher::*;
+
 fn main() {
     let pass = "password";
     let key = hash_password(pass);
