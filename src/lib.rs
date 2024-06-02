@@ -56,13 +56,12 @@ use aead::{
     OsRng,
 };
 use aes_gcm::Aes256Gcm;
+use cipher::Unsigned;
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 use std::io::{self, Read, Write};
 #[cfg(feature = "parallel")]
 use std::sync::Arc;
-#[cfg(feature = "parallel")]
-use cipher::Unsigned;
 #[cfg(feature = "parallel")]
 use rayon::iter::{ParallelBridge, ParallelIterator};
 #[cfg(feature = "dev")]
@@ -75,13 +74,13 @@ mod memory_pool;
 use memory_pool::MemoryPool;
 
 #[cfg(not(feature = "parallel"))]
-const BLOCK_SIZE: usize = 1 << 31; // 8 GiB
+const BLOCK_SIZE: usize = 1 << 31; // 2 GiB
 
-// POOL_SIZE must be greater than BLOCK_SIZE
+// POOL_SIZE must be greater than BLOCK_SIZE+tag_size (usually 16 bytes)
 #[cfg(feature = "parallel")]
-const POOL_SIZE: usize = 1 << 31; // 8 GiB
+const POOL_SIZE: usize = 1 << 31; // 2 GiB
 #[cfg(feature = "parallel")]
-const BLOCK_SIZE: usize = 1 << 28; // 512 MiB
+const BLOCK_SIZE: usize = POOL_SIZE >> 8; // 8 MiB
 
 const EXTENSION : &str = "enc";
 
@@ -156,7 +155,7 @@ fn decrypt_file_internal(input_file: &PathBuf, output_file: &PathBuf, key: &[u8]
 }
 
 #[cfg(feature = "parallel")]
-fn encrypt_file_par(input_file: &PathBuf, output_file: &PathBuf, key: &[u8], mem_pool: Arc<MemoryPool>) -> io::Result<()> {
+fn encrypt_file_par(input_file: &PathBuf, output_file: &PathBuf, key: &[u8], mem_pool: Arc<MemoryPool<u8>>) -> io::Result<()> {
     let cipher = Aes256Gcm::new(key.into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     
@@ -185,7 +184,7 @@ fn encrypt_file_par(input_file: &PathBuf, output_file: &PathBuf, key: &[u8], mem
 }
 
 #[cfg(feature = "parallel")]
-fn decrypt_file_par(input_file: &PathBuf, output_file: &PathBuf, key: &[u8], mem_pool: Arc<MemoryPool>) -> io::Result<()> {    
+fn decrypt_file_par(input_file: &PathBuf, output_file: &PathBuf, key: &[u8], mem_pool: Arc<MemoryPool<u8>>) -> io::Result<()> {    
     let cipher = Aes256Gcm::new(key.into());
 
     let mut input_file = fs::File::open(input_file)?;
@@ -283,6 +282,7 @@ pub fn encrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
         }
     }
 
+    // TODO: Better parallel processing
     #[cfg(feature = "parallel")]
     {
         let mem_pool = Arc::new(memory_pool::MemoryPool::new(POOL_SIZE));
@@ -361,7 +361,8 @@ pub fn decrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
 
     #[cfg(not(feature = "parallel"))]
     {
-        let mut buffer = vec![0u8; BLOCK_SIZE];
+        let tag_size: usize = <Aes256Gcm as AeadCore>::TagSize::to_usize();
+        let mut buffer = vec![0u8; BLOCK_SIZE+tag_size];
         assert!(buffer.len() >= BLOCK_SIZE, "Buffer size is not equal to BLOCK_SIZE");
 
         for entry in entries {
@@ -392,9 +393,10 @@ pub fn decrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
         }
     }
 
+    // TODO: Better parallel processing
     #[cfg(feature = "parallel")]
     {
-        let mem_pool = Arc::new(memory_pool::MemoryPool::new(BLOCK_SIZE));
+        let mem_pool = Arc::new(memory_pool::MemoryPool::new(POOL_SIZE));
 
         entries.par_bridge().for_each(|entry| {
             let entry = entry.unwrap();
@@ -487,6 +489,12 @@ pub fn encrypt_file(file: &str, key: &[u8]) -> io::Result<()> {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid file."));
     }
 
+    #[cfg(feature = "dev")]
+    {
+        let duration = start.elapsed();
+        println!("Time elapsed: {:?}", duration);
+    }
+
     Ok(())
 }
 
@@ -522,7 +530,8 @@ pub fn decrypt_file(file: &str, key: &[u8]) -> io::Result<()> {
     #[cfg(feature = "dev")]
     let start = Instant::now();
 
-    let mut buffer = vec![0u8; BLOCK_SIZE];
+    let tag_size: usize = <Aes256Gcm as AeadCore>::TagSize::to_usize();
+    let mut buffer = vec![0u8; BLOCK_SIZE+tag_size];
     assert!(buffer.len() >= BLOCK_SIZE, "Buffer size is not equal to BLOCK_SIZE");
 
     let input_file = PathBuf::from(file);
@@ -541,6 +550,12 @@ pub fn decrypt_file(file: &str, key: &[u8]) -> io::Result<()> {
         fs::remove_file(&input_file)?;
     } else {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid file."));
+    }
+
+    #[cfg(feature = "dev")]
+    {
+        let duration = start.elapsed();
+        println!("Time elapsed: {:?}", duration);
     }
 
     Ok(())

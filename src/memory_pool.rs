@@ -1,14 +1,13 @@
 //! Efficient memory pool that can be used to allocate and deallocate memory in a thread-safe manner.
-//! Allocated data is a `&mut [u8]` that can be used to read and write data.
+//! Allocated data is a `&mut [T]` that can be used to read and write data.
 //! 
-//! # Note
-//! 
-//! This memory pool is not meant to be used for general purpose memory allocation.
-//! 
-//! As the pool is a Rust `Vec<u8>`, it is not necessary to deallocate memory manually to avoid memory leaks.
+//! As the pool is a Rust `Vec<T>`, it is not necessary to deallocate memory manually to avoid memory leaks.
 //! However, it is important to deallocate memory to allow the pool to reuse it.
 use std::slice;
 use std::sync::Mutex;
+
+#[derive(Debug)]
+pub struct InsufficientCapacityError;
 
 #[derive(Debug)]
 struct Block {
@@ -17,31 +16,22 @@ struct Block {
 }
 
 #[derive(Debug)]
-pub struct InnerMemoryPool {
-    pool: Vec<u8>,
-    free_blocks: Vec<Block>,
+pub struct MemoryPool<T> {
+    _pool: Vec<T>, // Never explicitly used
+    pool_ptr: usize,
+    free_blocks: Mutex<Vec<Block>>,
 }
 
-#[derive(Debug)]
-pub struct MemoryPool {
-    inner: Mutex<InnerMemoryPool>,
-}
-
-impl MemoryPool {
+impl<T> MemoryPool<T> {
     pub fn new(capacity: usize) -> Self {
-        let inner_mem_pool = InnerMemoryPool {
-            pool: Vec::<u8>::with_capacity(capacity),
-            free_blocks: vec![Block { offset: 0, size: capacity }],
-        };
-        MemoryPool {
-            inner: Mutex::new(inner_mem_pool),
-        }
+        let pool = Vec::with_capacity(capacity);
+        let pool_ptr = pool.as_ptr() as usize;
+        let free_blocks = Mutex::new(vec![Block { offset: 0, size: capacity }]);
+        Self { _pool: pool, pool_ptr, free_blocks }
     }
 
-    pub fn allocate(&self, size: usize) -> Result<&mut [u8], &'static str> {
-        let mut allocator = self.inner.lock().unwrap();
-
-        let free_blocks = &mut allocator.free_blocks;
+    pub fn allocate(&self, size: usize) -> Result<&mut [T], InsufficientCapacityError> {
+        let mut free_blocks = self.free_blocks.lock().unwrap();
         
         if let Some(index) = free_blocks.iter().position(|block| block.size >= size) {
             let offset = free_blocks[index].offset;
@@ -50,53 +40,54 @@ impl MemoryPool {
             if free_blocks[index].size == 0 {
                 free_blocks.remove(index);
             }
-            let ptr = unsafe { allocator.pool.as_mut_ptr().add(offset) };
+            let ptr = (self.pool_ptr + offset) as *mut T;
             return Ok(unsafe { slice::from_raw_parts_mut(ptr, size) });
         }
 
-        Err("Insufficient capacity")
+        Err(InsufficientCapacityError)
     }
 
-    pub fn allocate_blocking(&self, size: usize) -> &mut [u8] {
+    pub fn allocate_blocking(&self, size: usize) -> &mut [T] {
         loop {
             match self.allocate(size) {
                 Ok(ptr) => return ptr,
-                Err(_) => continue,
+                // Memory pool is full, wait for deallocation
+                Err(InsufficientCapacityError) => continue,
             }
         }
     }
 
-    pub fn deallocate(&self, ptr: &mut [u8]) {
-        let mut allocator = self.inner.lock().unwrap();
-        let pool_size = allocator.pool.as_ptr() as usize;
-        let free_blocks = &mut allocator.free_blocks;
+    pub fn deallocate(&self, ptr: &mut [T]) {
         let size = ptr.len();
         let ptr = ptr.as_mut_ptr();
-        let offset = (ptr as usize) - (pool_size);
+        let offset = ptr as usize - self.pool_ptr;
+        
+        let mut merged_with_next = false;
+        let mut merged_with_previous = false;
+        
+        let mut free_blocks = self.free_blocks.lock().unwrap();
 
         let index = free_blocks.iter().position(|block| block.offset > offset).unwrap_or(free_blocks.len());
 
         // Insert by merging with previous and next blocks if possible
-        let mut inserted_after = false;
-        let mut inserted_before = false;
         if free_blocks.len() > 0 && index < free_blocks.len() && free_blocks[index].offset == offset + size {
-            inserted_after = true;
+            merged_with_next = true;
             free_blocks[index].offset = offset;
             free_blocks[index].size += size;
         }
         if index > 0 && free_blocks[index-1].offset + free_blocks[index-1].size == offset {
-            inserted_before = true;
-            free_blocks[index-1].size += match inserted_after{
+            merged_with_previous = true;
+            free_blocks[index-1].size += match merged_with_next{
                 true => {
                     free_blocks[index].size
                 },
                 false => size,
             };
-            if inserted_after {
+            if merged_with_next {
                 free_blocks.remove(index);
             }
         }
-        if !inserted_after && !inserted_before {
+        if !merged_with_next && !merged_with_previous {
             free_blocks.insert(index, Block { offset, size });
         }
     }
@@ -110,10 +101,10 @@ mod tests {
 
     #[test]
     fn test_basic_memory_pool() {
-        let memory_pool = MemoryPool::new(1024);
+        let memory_pool = MemoryPool::<u8>::new(1024);
         let ptr = memory_pool.allocate(512).unwrap();
         let ptr2 = memory_pool.allocate(512).unwrap();
-        assert_eq!(ptr.as_mut_ptr() as usize + 512, ptr2.as_mut_ptr() as usize);
+        assert_eq!(ptr.as_ptr() as usize + 512, ptr2.as_ptr() as usize);
         memory_pool.deallocate(ptr);
         memory_pool.deallocate(ptr2);
     }
@@ -121,7 +112,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_memory_pool_panic() {
-        let memory_pool = MemoryPool::new(1024);
+        let memory_pool = MemoryPool::<u8>::new(1024);
         let ptr = memory_pool.allocate(1024).unwrap();
         let ptr2 = memory_pool.allocate(1).unwrap();
 
@@ -131,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_reallocate_small_part() {
-        let memory_pool = MemoryPool::new(1024);
+        let memory_pool = MemoryPool::<u8>::new(1024);
         let ptr = memory_pool.allocate(512).unwrap();
         let ptr2 = memory_pool.allocate(512).unwrap();
         assert_eq!(ptr.as_mut_ptr() as usize + 512, ptr2.as_mut_ptr() as usize);
@@ -144,7 +135,7 @@ mod tests {
 
     #[test]
     fn test_merge_blocks() {
-        let memory_pool = MemoryPool::new(1024);
+        let memory_pool = MemoryPool::<u8>::new(1024);
         let mut ptrs = vec![
             memory_pool.allocate(256).unwrap(),
             memory_pool.allocate(256).unwrap(),
@@ -163,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_block_resize() {
-        let memory_pool = MemoryPool::new(1024);
+        let memory_pool = MemoryPool::<u8>::new(1024);
         let ptr = memory_pool.allocate(512).unwrap();
         let ptr2 = memory_pool.allocate(512).unwrap();
         assert_eq!(ptr.as_mut_ptr() as usize + 512, ptr2.as_mut_ptr() as usize);
@@ -176,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_overlapping() {
-        let memory_pool = MemoryPool::new(1024);
+        let memory_pool = MemoryPool::<u8>::new(1024);
         let ptr = memory_pool.allocate(512).unwrap();
         let ptr2 = memory_pool.allocate(512).unwrap();
         for i in 0..512 {
@@ -193,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_sync_in_threads() {
-        let memory_pool = Arc::new(MemoryPool::new(1048576));
+        let memory_pool = Arc::new(MemoryPool::<u8>::new(1048576));
         let memory_pool2 = memory_pool.clone();
         let memory_pool3 = memory_pool.clone();
         let handle = std::thread::spawn(move || {
@@ -224,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_lots_of_allocations() {
-        let memory_pool = MemoryPool::new(1048576);
+        let memory_pool = MemoryPool::<u8>::new(1048576);
         let mut ptrs = Vec::new();
         for _ in 0..1024 {
             let ptr = memory_pool.allocate(1024).unwrap();
@@ -249,7 +240,7 @@ mod tests {
     fn test_lots_of_alloc_and_threads() {
         const NB_ALLOCS: usize = 1024*8;
         const ALLOC_SIZE: usize = 16;
-        let memory_pool = Arc::new(MemoryPool::new(NB_ALLOCS * ALLOC_SIZE));
+        let memory_pool = Arc::new(MemoryPool::<u8>::new(NB_ALLOCS * ALLOC_SIZE));
         let memory_pool2 = memory_pool.clone();
         let mut handles = Vec::new();
         for _ in 0..NB_ALLOCS {
@@ -259,12 +250,6 @@ mod tests {
                 for i in 0..ALLOC_SIZE {
                     ptr[i] = 1u8;
                 }
-                {
-                    let mp = memory_pool.inner.lock().unwrap();
-                    println!("{:?}", ptr.as_mut_ptr() as usize - mp.pool.as_ptr() as usize);
-                    println!("{:?}", ptr.len());
-                    println!("{:?}", mp.free_blocks);
-                }
                 memory_pool.deallocate(ptr);
             });
             handles.push(handle);
@@ -272,7 +257,6 @@ mod tests {
         for handle in handles {
             handle.join().unwrap();
         }
-        println!("{:?}", memory_pool.inner.lock().unwrap().free_blocks);
         let handle = std::thread::spawn(move || {
             let ptr = memory_pool2.allocate(NB_ALLOCS*ALLOC_SIZE).unwrap();
             memory_pool2.deallocate(ptr);
