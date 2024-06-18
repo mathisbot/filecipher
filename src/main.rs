@@ -60,6 +60,9 @@ fn main() {
         }
     }
 
+    #[cfg(feature = "dev")]
+    pretty_env_logger::init();
+
     let key = hash_password(pass);
 
     let path_type = PathType::from_str(path);

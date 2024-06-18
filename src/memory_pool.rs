@@ -238,8 +238,8 @@ mod tests {
 
     #[test]
     fn test_lots_of_alloc_and_threads() {
-        const NB_ALLOCS: usize = 1024*8;
-        const ALLOC_SIZE: usize = 16;
+        const NB_ALLOCS: usize = 1024*32;
+        const ALLOC_SIZE: usize = 8;
         let memory_pool = Arc::new(MemoryPool::<u8>::new(NB_ALLOCS * ALLOC_SIZE));
         let memory_pool2 = memory_pool.clone();
         let mut handles = Vec::new();

@@ -19,7 +19,7 @@
 //! 
 //! ## Features
 //! 
-//! - `dev`: Disables password prompt by using a default password and enables benchmarking for encryption and decryption using `std::time`.
+//! - `dev`: Disables password prompt by using a default password and enables logging using `log` as well as benchmarking for encryption and decryption using `std::time`.
 //! - `parallel`: Enables parallel processing for encrypting and decrypting files using the `rayon` crate and a fast memory pool.
 //! 
 //! ## Example
@@ -66,6 +66,8 @@ use std::sync::Arc;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 #[cfg(feature = "dev")]
 use std::time::Instant;
+#[cfg(feature = "dev")]
+use log::info;
 
 mod aes_gcm;
 #[cfg(feature = "parallel")]
@@ -268,10 +270,10 @@ pub fn encrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
                 let output_file = input_file.with_extension(new_extension);
 
                 #[cfg(feature = "dev")]
-                println!("Encrypting file {}. ", input_file.display());
+                info!("Encrypting file {}. ", input_file.display());
                 encrypt_file_internal(&input_file, &output_file, key, &mut buffer)?;
                 #[cfg(feature = "dev")]
-                println!("File {} encrypted.", input_file.display());
+                info!("File {} encrypted.", input_file.display());
 
                 fs::remove_file(&input_file)?;
             }
@@ -302,10 +304,10 @@ pub fn encrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
                 let output_file = input_file.with_extension(new_extension);
 
                 #[cfg(feature = "dev")]
-                println!("Encrypting file {}. ", input_file.display());
+                info!("Encrypting file {}. ", input_file.display());
                 encrypt_file_par(&input_file, &output_file, key, mem_pool.clone()).unwrap();
                 #[cfg(feature = "dev")]
-                println!("File {} encrypted.", input_file.display());
+                info!("File {} encrypted.", input_file.display());
 
                 fs::remove_file(&input_file).unwrap();
             }
@@ -319,7 +321,7 @@ pub fn encrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
     #[cfg(feature = "dev")]
     {
         let duration = start.elapsed();
-        println!("Time elapsed: {:?}", duration);
+        info!("Time needed to encrypt {}: {:?}", directory, duration);
     }
 
     Ok(())
@@ -379,10 +381,10 @@ pub fn decrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
                 let output_file = input_file.with_extension("");
 
                 #[cfg(feature = "dev")]
-                println!("Decrypting file {}. ", input_file.display());
+                info!("Decrypting file {}. ", input_file.display());
                 decrypt_file_internal(&input_file, &output_file, key, &mut buffer)?;
                 #[cfg(feature = "dev")]
-                println!("File {} decrypted.", input_file.display());
+                info!("File {} decrypted.", input_file.display());
 
                 fs::remove_file(&input_file)?;
             }
@@ -412,10 +414,10 @@ pub fn decrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
                 let output_file = input_file.with_extension("");
 
                 #[cfg(feature = "dev")]
-                println!("Decrypting file {}. ", input_file.display());
+                info!("Decrypting file {}. ", input_file.display());
                 decrypt_file_par(&input_file, &output_file, key, mem_pool.clone()).unwrap();
                 #[cfg(feature = "dev")]
-                println!("File {} decrypted.", input_file.display());
+                info!("File {} decrypted.", input_file.display());
 
                 fs::remove_file(&input_file).unwrap();
             }
@@ -429,7 +431,7 @@ pub fn decrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
     #[cfg(feature = "dev")]
     {
         let duration = start.elapsed();
-        println!("Time elapsed: {:?}", duration);
+        info!("Time needed to decrypt {}: {:?}", directory, duration);
     }
 
     Ok(())
@@ -492,7 +494,7 @@ pub fn encrypt_file(file: &str, key: &[u8]) -> io::Result<()> {
     #[cfg(feature = "dev")]
     {
         let duration = start.elapsed();
-        println!("Time elapsed: {:?}", duration);
+        info!("Time elapsed: {:?}", duration);
     }
 
     Ok(())
@@ -555,7 +557,7 @@ pub fn decrypt_file(file: &str, key: &[u8]) -> io::Result<()> {
     #[cfg(feature = "dev")]
     {
         let duration = start.elapsed();
-        println!("Time elapsed: {:?}", duration);
+        info!("Time elapsed: {:?}", duration);
     }
 
     Ok(())

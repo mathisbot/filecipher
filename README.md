@@ -4,7 +4,7 @@ This crate provides a Rust API that uses AES-256-GCM to encrypt/decrypt files/di
 
 ## Features
 
-- `dev`: Disables password prompt by using a default password and enables benchmarking for encryption and decryption using `std::time`.
+- `dev`: Disables password prompt by using a default password and enables logging using `log` as well as benchmarking for encryption and decryption using `std::time`.
 - `parallel`: Enables parallel processing for encrypting and decrypting directories using the `rayon` crate and a fast memory pool.
 
 ## Installation
