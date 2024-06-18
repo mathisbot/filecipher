@@ -4,7 +4,7 @@
 //! As the pool is a Rust `Vec<T>`, it is not necessary to deallocate memory manually to avoid memory leaks.
 //! However, it is important to deallocate memory to allow the pool to reuse it.
 use std::slice;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 #[derive(Debug)]
 pub struct InsufficientCapacityError;
@@ -24,14 +24,15 @@ pub struct MemoryPool<T> {
 
 impl<T> MemoryPool<T> {
     pub fn new(capacity: usize) -> Self {
-        let pool = Vec::with_capacity(capacity);
+        let mut pool = Vec::with_capacity(capacity);
+        unsafe { pool.set_len(capacity) };
         let pool_ptr = pool.as_ptr() as usize;
         let free_blocks = Mutex::new(vec![Block { offset: 0, size: capacity }]);
         Self { _pool: pool, pool_ptr, free_blocks }
     }
 
     pub fn allocate(&self, size: usize) -> Result<&mut [T], InsufficientCapacityError> {
-        let mut free_blocks = self.free_blocks.lock().unwrap();
+        let mut free_blocks = self.free_blocks.lock();
         
         if let Some(index) = free_blocks.iter().position(|block| block.size >= size) {
             let offset = free_blocks[index].offset;
@@ -52,7 +53,7 @@ impl<T> MemoryPool<T> {
             match self.allocate(size) {
                 Ok(ptr) => return ptr,
                 // Memory pool is full, wait for deallocation
-                Err(InsufficientCapacityError) => continue,
+                Err(InsufficientCapacityError) => std::thread::yield_now(),
             }
         }
     }
@@ -62,32 +63,19 @@ impl<T> MemoryPool<T> {
         let ptr = ptr.as_mut_ptr();
         let offset = ptr as usize - self.pool_ptr;
         
-        let mut merged_with_next = false;
-        let mut merged_with_previous = false;
-        
-        let mut free_blocks = self.free_blocks.lock().unwrap();
-
+        let mut free_blocks = self.free_blocks.lock();
         let index = free_blocks.iter().position(|block| block.offset > offset).unwrap_or(free_blocks.len());
 
-        // Insert by merging with previous and next blocks if possible
-        if free_blocks.len() > 0 && index < free_blocks.len() && free_blocks[index].offset == offset + size {
-            merged_with_next = true;
-            free_blocks[index].offset = offset;
-            free_blocks[index].size += size;
-        }
-        if index > 0 && free_blocks[index-1].offset + free_blocks[index-1].size == offset {
-            merged_with_previous = true;
-            free_blocks[index-1].size += match merged_with_next{
-                true => {
-                    free_blocks[index].size
-                },
-                false => size,
-            };
-            if merged_with_next {
+        if index > 0 && free_blocks[index - 1].offset + free_blocks[index - 1].size == offset {
+            free_blocks[index - 1].size += size;
+            if index < free_blocks.len() && offset + size == free_blocks[index].offset {
+                free_blocks[index - 1].size += free_blocks[index].size;
                 free_blocks.remove(index);
             }
-        }
-        if !merged_with_next && !merged_with_previous {
+        } else if index < free_blocks.len() && offset + size == free_blocks[index].offset {
+            free_blocks[index].offset = offset;
+            free_blocks[index].size += size;
+        } else {
             free_blocks.insert(index, Block { offset, size });
         }
     }

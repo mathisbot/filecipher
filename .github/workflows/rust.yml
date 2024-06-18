@@ -20,3 +20,7 @@ jobs:
       run: cargo build --verbose -F parallel
     - name: Run tests
       run: cargo test --verbose -F parallel
+    - name: Build with parallel feature
+      run: cargo build --verbose -F parallel
+    - name: Run tests with parallel feature
+      run: cargo test --verbose -F parallel

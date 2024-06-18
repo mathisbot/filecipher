@@ -12,6 +12,7 @@ cipher = "0.4.4"
 ctr = "0.9.2"
 ghash = { version = "0.5.1", default-features = false }
 log = { version = "0.4.21", optional = true }
+parking_lot = { version = "0.12.3", optional = true }
 pretty_env_logger = { version = "0.5.0", optional = true }
 rayon = { version = "1.10.0", optional = true }
 rpassword = "7.3.1"
@@ -19,6 +20,6 @@ sha2 = "0.10.8"
 subtle = { version = "2.5.0", default-features = false }
 
 [features]
-default = ["dev", "parallel"]
+default = []
 dev = ["log", "pretty_env_logger"]
-parallel = ["rayon"]
+parallel = ["rayon", "parking_lot"]

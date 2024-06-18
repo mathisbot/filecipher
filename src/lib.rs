@@ -63,7 +63,7 @@ use std::io::{self, Read, Write};
 #[cfg(feature = "parallel")]
 use std::sync::Arc;
 #[cfg(feature = "parallel")]
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::iter::{ParallelIterator, IntoParallelRefIterator};
 #[cfg(feature = "dev")]
 use std::time::Instant;
 #[cfg(feature = "dev")]
@@ -149,7 +149,7 @@ fn decrypt_file_internal(input_file: &PathBuf, output_file: &PathBuf, key: &[u8]
             break;
         }
         let plaintext = cipher.decrypt(&nonce, &buffer[..bytes_read])
-            .expect("decryption failure!");
+            .expect("Decryption failure! Please check password or file integrity.");
         output_file.write_all(&plaintext)?;
     }
 
@@ -245,7 +245,9 @@ fn decrypt_file_par(input_file: &PathBuf, output_file: &PathBuf, key: &[u8], mem
 /// }
 /// ```
 pub fn encrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
-    let entries = fs::read_dir(directory)?;
+    let entries: Vec<PathBuf> = fs::read_dir(directory)?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .collect();
 
     #[cfg(feature = "dev")]
     let start = Instant::now();
@@ -255,31 +257,26 @@ pub fn encrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
         let mut buffer = vec![0u8; BLOCK_SIZE];
         assert!(buffer.len() >= BLOCK_SIZE, "Buffer size is not equal to BLOCK_SIZE");
 
-        for entry in entries {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
-            
-            if file_type.is_file() {
-                let input_file = entry.path();
-                if let Some(ext) = input_file.extension() {
+        for entry in entries {            
+            if entry.is_file() {
+                if let Some(ext) = entry.extension() {
                     if ext == EXTENSION {
                         continue;
                     }
                 }
-                let new_extension = format!("{}.{}", input_file.extension().unwrap_or_default().to_str().unwrap_or_default(), EXTENSION);
-                let output_file = input_file.with_extension(new_extension);
+                let new_extension = format!("{}.{}", entry.extension().unwrap_or_default().to_str().unwrap_or_default(), EXTENSION);
+                let output_file = entry.with_extension(new_extension);
 
                 #[cfg(feature = "dev")]
-                info!("Encrypting file {}. ", input_file.display());
-                encrypt_file_internal(&input_file, &output_file, key, &mut buffer)?;
+                info!("Encrypting file {}. ", entry.display());
+                encrypt_file_internal(&entry, &output_file, key, &mut buffer)?;
                 #[cfg(feature = "dev")]
-                info!("File {} encrypted.", input_file.display());
+                info!("File {} encrypted.", entry.display());
 
-                fs::remove_file(&input_file)?;
+                fs::remove_file(&entry)?;
             }
-            if file_type.is_dir() {
-                let input_file = entry.path();
-                encrypt_directory(&input_file.to_str().unwrap_or_default(), key)?;
+            if entry.is_dir() {
+                encrypt_directory(entry.to_str().unwrap_or_default(), key)?;
             }
         }
     }
@@ -289,31 +286,26 @@ pub fn encrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
     {
         let mem_pool = Arc::new(memory_pool::MemoryPool::new(POOL_SIZE));
 
-        entries.par_bridge().for_each(|entry| {
-            let entry = entry.unwrap();
-            let file_type = entry.file_type().unwrap();
-            
-            if file_type.is_file() {
-                let input_file = entry.path();
-                if let Some(ext) = input_file.extension() {
+        entries.par_iter().for_each(|entry| {
+            if entry.is_file() {
+                if let Some(ext) = entry.extension() {
                     if ext == EXTENSION {
                         return;
                     }
                 }
-                let new_extension = format!("{}.{}", input_file.extension().unwrap_or_default().to_str().unwrap_or_default(), EXTENSION);
-                let output_file = input_file.with_extension(new_extension);
+                let new_extension = format!("{}.{}", entry.extension().unwrap_or_default().to_str().unwrap_or_default(), EXTENSION);
+                let output_file = entry.with_extension(new_extension);
 
                 #[cfg(feature = "dev")]
-                info!("Encrypting file {}. ", input_file.display());
-                encrypt_file_par(&input_file, &output_file, key, mem_pool.clone()).unwrap();
+                info!("Encrypting file {}. ", entry.display());
+                encrypt_file_par(&entry, &output_file, key, mem_pool.clone()).unwrap();
                 #[cfg(feature = "dev")]
-                info!("File {} encrypted.", input_file.display());
+                info!("File {} encrypted.", entry.display());
 
-                fs::remove_file(&input_file).unwrap();
+                fs::remove_file(&entry).unwrap();
             }
-            if file_type.is_dir() {
-                let input_file = entry.path();
-                encrypt_directory(&input_file.to_str().unwrap_or_default(), key).unwrap();
+            if entry.is_dir() {
+                encrypt_directory(entry.to_str().unwrap_or_default(), key).unwrap();
             }
         });
     }
@@ -356,7 +348,9 @@ pub fn encrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
 /// }
 /// ```
 pub fn decrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
-    let entries = fs::read_dir(directory)?;
+    let entries: Vec<PathBuf> = fs::read_dir(directory)?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .collect();
 
     #[cfg(feature = "dev")]
     let start = Instant::now();
@@ -367,30 +361,25 @@ pub fn decrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
         let mut buffer = vec![0u8; BLOCK_SIZE+tag_size];
         assert!(buffer.len() >= BLOCK_SIZE, "Buffer size is not equal to BLOCK_SIZE");
 
-        for entry in entries {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
-            
-            if file_type.is_file() {
-                let input_file = entry.path();
-                if let Some(ext) = input_file.extension() {
+        for entry in entries {            
+            if entry.is_file() {
+                if let Some(ext) = entry.extension() {
                     if ext != EXTENSION {
                         continue;
                     }
                 }
-                let output_file = input_file.with_extension("");
+                let output_file = entry.with_extension("");
 
                 #[cfg(feature = "dev")]
-                info!("Decrypting file {}. ", input_file.display());
-                decrypt_file_internal(&input_file, &output_file, key, &mut buffer)?;
+                info!("Decrypting file {}. ", entry.display());
+                decrypt_file_internal(&entry, &output_file, key, &mut buffer)?;
                 #[cfg(feature = "dev")]
-                info!("File {} decrypted.", input_file.display());
+                info!("File {} decrypted.", entry.display());
 
-                fs::remove_file(&input_file)?;
+                fs::remove_file(&entry)?;
             }
-            if file_type.is_dir() {
-                let input_file = entry.path();
-                decrypt_directory(&input_file.to_str().unwrap_or_default(), key)?;
+            if entry.is_dir() {
+                decrypt_directory(entry.to_str().unwrap_or_default(), key)?;
             }
         }
     }
@@ -400,30 +389,25 @@ pub fn decrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
     {
         let mem_pool = Arc::new(memory_pool::MemoryPool::new(POOL_SIZE));
 
-        entries.par_bridge().for_each(|entry| {
-            let entry = entry.unwrap();
-            let file_type = entry.file_type().unwrap();
-            
-            if file_type.is_file() {
-                let input_file = entry.path();
-                if let Some(ext) = input_file.extension() {
+        entries.par_iter().for_each(|entry| {            
+            if entry.is_file() {
+                if let Some(ext) = entry.extension() {
                     if ext != EXTENSION {
                         return;
                     }
                 }
-                let output_file = input_file.with_extension("");
+                let output_file = entry.with_extension("");
 
                 #[cfg(feature = "dev")]
-                info!("Decrypting file {}. ", input_file.display());
-                decrypt_file_par(&input_file, &output_file, key, mem_pool.clone()).unwrap();
+                info!("Decrypting file {}. ", entry.display());
+                decrypt_file_par(&entry, &output_file, key, mem_pool.clone()).unwrap();
                 #[cfg(feature = "dev")]
-                info!("File {} decrypted.", input_file.display());
+                info!("File {} decrypted.", entry.display());
 
-                fs::remove_file(&input_file).unwrap();
+                fs::remove_file(&entry).unwrap();
             }
-            if file_type.is_dir() {
-                let input_file = entry.path();
-                decrypt_directory(&input_file.to_str().unwrap_or_default(), key).unwrap();
+            if entry.is_dir() {
+                decrypt_directory(entry.to_str().unwrap_or_default(), key).unwrap();
             }
         });
     }
