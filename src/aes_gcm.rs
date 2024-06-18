@@ -121,7 +121,7 @@ where
 
         let (ctr, mask) = self.init_ctr(nonce);
 
-        // TODO: Encryption and GHASH at the same time
+        // TODO: Decryption and GHASH at the same time
         // https://github.com/RustCrypto/AEADs/issues/74
         let expected_tag = self.compute_tag(mask, associated_data, buffer);
 

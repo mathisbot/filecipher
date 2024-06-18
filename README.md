@@ -53,3 +53,8 @@ fn main() {
     decrypt_directory(&directory, &key).unwrap();
 }
 ```
+
+## Notes
+
+- For now, buffer size is fixed at 2GB. It means that you either need to change it in `lib.rs` or have at least 2GB of free RAM. This is very likely to change in the future.
+- For now, parallel processing only do one thing: each file is ciphered by a separate thread. In the future, files might also be ciphered by multiple threads, so that the whole process is faster.

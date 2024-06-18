@@ -254,8 +254,9 @@ pub fn encrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
 
     #[cfg(not(feature = "parallel"))]
     {
-        let mut buffer = vec![0u8; BLOCK_SIZE];
-        assert!(buffer.len() >= BLOCK_SIZE, "Buffer size is not equal to BLOCK_SIZE");
+        let mut buffer = Vec::with_capacity(BLOCK_SIZE);
+        assert!(buffer.capacity() >= BLOCK_SIZE, "Buffer size is smaller than BLOCK_SIZE");
+        unsafe { buffer.set_len(BLOCK_SIZE) };
 
         for entry in entries {            
             if entry.is_file() {
@@ -358,8 +359,9 @@ pub fn decrypt_directory(directory: &str, key: &[u8]) -> io::Result<()> {
     #[cfg(not(feature = "parallel"))]
     {
         let tag_size: usize = <Aes256Gcm as AeadCore>::TagSize::to_usize();
-        let mut buffer = vec![0u8; BLOCK_SIZE+tag_size];
-        assert!(buffer.len() >= BLOCK_SIZE, "Buffer size is not equal to BLOCK_SIZE");
+        let mut buffer = Vec::with_capacity(BLOCK_SIZE+tag_size);
+        assert!(buffer.capacity() >= BLOCK_SIZE+tag_size, "Buffer size is smaller than BLOCK_SIZE");
+        unsafe { buffer.set_len(BLOCK_SIZE+tag_size) };
 
         for entry in entries {            
             if entry.is_file() {
